@@ -1,5 +1,6 @@
 package io.javabrains.moviecatalogservice.resources;
 
+import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
 import io.javabrains.moviecatalogservice.models.CatalogItem;
 import io.javabrains.moviecatalogservice.models.Movie;
 import io.javabrains.moviecatalogservice.models.Rating;
@@ -12,7 +13,6 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -29,15 +29,40 @@ public class CatalogResource {
     @RequestMapping("/{userId}")
     public List<CatalogItem> getCatalog(@PathVariable("userId") String userId) {
 
-        UserRating userRating = restTemplate.getForObject("http://ratings-data-service/ratingsdata/user/" + userId, UserRating.class);
+        UserRating userRating = getUserRating(userId);
 
         return userRating.getRatings().stream()
-                .map(rating -> {
-                    Movie movie = restTemplate.getForObject("http://movie-info-service/movies/" + rating.getMovieId(), Movie.class);
-                    return new CatalogItem(movie.getName(), movie.getDescription(), rating.getRating());
-                })
+                .map(rating -> getCatalogItem(rating))
                 .collect(Collectors.toList());
 
+    }
+
+    @HystrixCommand(fallbackMethod = "getFallbackCatalogItem")
+    private CatalogItem getCatalogItem(Rating rating) {
+        Movie movie = restTemplate.getForObject("http://movie-info-service/movies/" + rating.getMovieId(), Movie.class);
+        return new CatalogItem(movie.getName(), movie.getDescription(), rating.getRating());
+    }
+
+    private CatalogItem getFallbackCatalogItem(Rating rating) {
+        return new CatalogItem("Move name not found", "", rating.getRating());
+    }
+
+    @HystrixCommand(fallbackMethod = "getFallbackUserRating")
+    private UserRating getUserRating(String userId) {
+        return restTemplate.getForObject("http://ratings-data-service/ratingsdata/user/" + userId, UserRating.class);
+    }
+
+    private UserRating getFallbackUserRating(String userId) {
+        UserRating userRating = new UserRating();
+        userRating.setUserId(userId);
+        userRating.setRatings(Arrays.asList(
+                new Rating("0",0)
+        ));
+        return userRating;
+    }
+
+    public List<CatalogItem> getFallbackCatalog(@PathVariable("userId") String userId) {
+        return Arrays.asList(new CatalogItem("No movie", "", 0));
     }
 }
 
